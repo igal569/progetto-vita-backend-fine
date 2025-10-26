@@ -1,65 +1,66 @@
+// /api/sessions.js
 const fetch = require("node-fetch");
 
-// helper risposta errore
 function sendError(res, code, msg) {
   res.status(code).json({ error: msg });
 }
 
 module.exports = async (req, res) => {
-  // accettiamo solo GET come avevi visto
   if (req.method !== "GET") {
     return sendError(res, 405, "Method not allowed");
   }
 
   try {
-    // leggiamo le variabili ambiente GIUSTE (quelle che hai già su Vercel)
     const AIRTABLE_TOKEN = process.env.AIRTABLE_TOKEN;
     const BASE_ID = process.env.BASE_ID;
+    if (!AIRTABLE_TOKEN || !BASE_ID) {
+      console.error("Missing env AIRTABLE_TOKEN or BASE_ID");
+      return sendError(res, 500, "Server misconfigured");
+    }
 
-    // parametri opzionali dalla query, uguali a quelli che il frontend costruisce
-    const {
-      maxRecords,
-      filterByFormula,
-      sortField,
-      sortDirection
-    } = req.query || {};
+    // deviceId dal frontend
+    const { deviceId } = req.query || {};
+    if (!deviceId) {
+      return sendError(res, 400, "deviceId required");
+    }
 
-    // costruiamo l'URL Airtable verso la tabella "Sessions"
-    const tableName = "Sessions"; // <-- il nome è giusto come nella tua base
+    // costruiamo la query Airtable con filtro e sort
+    // stesso filtro che usavi sul frontend vecchio:
+    // AND({DeviceId}="<did>", NOT({Revoked}))
+    const tableName = "Sessions";
     const url = new URL(
       `https://api.airtable.com/v0/${BASE_ID}/${encodeURIComponent(tableName)}`
     );
 
-    if (maxRecords) url.searchParams.set("maxRecords", maxRecords);
-    if (filterByFormula) url.searchParams.set("filterByFormula", filterByFormula);
+    url.searchParams.set("maxRecords", "1");
+    url.searchParams.set(
+      "filterByFormula",
+      `AND({DeviceId}="${deviceId}", NOT({Revoked}))`
+    );
+    url.searchParams.set("sort[0][field]", "CreatedAt");
+    url.searchParams.set("sort[0][direction]", "desc");
 
-    // supporto sort[0][field] / sort[0][direction] come nel frontend
-    if (sortField) {
-      url.searchParams.set("sort[0][field]", sortField);
-      url.searchParams.set(
-        "sort[0][direction]",
-        sortDirection || "desc"
-      );
-    }
-
-    // chiamata vera ad Airtable con il token segreto
     const air = await fetch(url.toString(), {
       headers: {
-        Authorization: `Bearer ${AIRTABLE_TOKEN}`
-      }
+        Authorization: `Bearer ${AIRTABLE_TOKEN}`,
+      },
     });
 
     if (!air.ok) {
       const txt = await air.text();
-      console.error("Airtable error:", txt);
+      console.error("Airtable /Sessions error:", txt);
       return sendError(res, 500, "Airtable request failed");
     }
 
     const data = await air.json();
 
-    // rispondiamo al browser con i dati Airtable così com'è abituato il frontend
-    return res.status(200).json(data);
-
+    // Rispondiamo così com'è (records[], fields.Email / fields.SessionId ecc.)
+    // Il frontend poi fa:
+    // const rec = d.records?.[0];
+    // rec.fields.Email, rec.fields.SessionId ...
+    return res.status(200).json({
+      records: data.records || [],
+    });
   } catch (err) {
     console.error("Server error /api/sessions:", err);
     return sendError(res, 500, "Internal error");
