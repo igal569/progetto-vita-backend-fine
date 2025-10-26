@@ -1,4 +1,3 @@
-// /api/log.js
 const fetch = require("node-fetch");
 
 const AIRTABLE_TOKEN = process.env.AIRTABLE_TOKEN;
@@ -9,7 +8,7 @@ function sendError(res, code, msg) {
   res.status(code).json({ error: msg });
 }
 
-// Data di oggi in Europa/Roma -> "YYYY-MM-DD"
+// data di oggi in formato YYYY-MM-DD fuso orario Europa/Rome
 function todayISOEuropeRome() {
   try {
     const nowRome = new Date(
@@ -20,7 +19,7 @@ function todayISOEuropeRome() {
     const d = String(nowRome.getDate()).padStart(2, "0");
     return `${y}-${m}-${d}`;
   } catch (e) {
-    // fallback UTC se per qualche motivo il timezone fallisce
+    // fallback UTC
     const now = new Date();
     const y = now.getUTCFullYear();
     const m = String(now.getUTCMonth() + 1).padStart(2, "0");
@@ -29,7 +28,7 @@ function todayISOEuropeRome() {
   }
 }
 
-// Prende email utente dalla tabella Users partendo dal suo recordId Airtable
+// legge l'email dell'utente dalla tabella Users dato il suo recordId
 async function fetchUserEmail(userId) {
   if (!userId) return null;
 
@@ -48,31 +47,25 @@ async function fetchUserEmail(userId) {
   }
 
   const data = await r.json();
-  // Campo email nel record Users (mettiamo entrambi i casi possibili)
+  // campo Email nella tabella Users (come mi hai detto)
   return data.fields?.["Email"] || data.fields?.["email"] || null;
 }
 
 module.exports = async (req, res) => {
-  // Per ora supportiamo solo POST
+  // accettiamo SOLO POST
   if (req.method !== "POST") {
     return sendError(res, 405, "Method not allowed");
   }
 
-  // check env (aiuta debug se su Vercel dimentichi le variabili)
-  if (!AIRTABLE_TOKEN || !BASE_ID) {
-    console.error("Missing env AIRTABLE_TOKEN or BASE_ID");
-    return sendError(res, 500, "Server misconfigured");
-  }
-
   try {
     const body = req.body || {};
-    // body atteso dal frontend:
+    // ci aspettiamo:
     // {
-    //   UtenteId: CURRENT_USER_ID,
-    //   AttivitaUtenteId: attId,
-    //   Nota: "...",        // opzionale
-    //   Umore: 3,           // opzionale
-    //   DurataSec: 120      // opzionale
+    //   UtenteId: "recUser...",
+    //   AttivitaUtenteId: "recAttUtente...",
+    //   Nota: "...",        (opzionale)
+    //   Umore: 3,           (opzionale)
+    //   DurataSec: 120      (opzionale)
     // }
 
     const {
@@ -87,7 +80,7 @@ module.exports = async (req, res) => {
       return sendError(res, 400, "Missing UtenteId or AttivitaUtenteId");
     }
 
-    // 1. Recupero email utente (serve per /api/completati)
+    // 1. prendo l'email utente per scriverla nel log
     let userEmail = null;
     try {
       userEmail = await fetchUserEmail(UtenteId);
@@ -95,17 +88,21 @@ module.exports = async (req, res) => {
       console.warn("Non riesco a leggere email utente, continuo senza:", e.message);
     }
 
-    // 2. Preparo fields per Airtable "Log Completamenti"
+    // 2. preparo i campi Airtable
     const fields = {
-      "Utente": [UtenteId],                    // link a Users
-      "Attività Utente": [AttivitaUtenteId],   // link a Attività Utente
-      "Data ISO": todayISOEuropeRome()         // es. "2025-10-26"
+      // link
+      "Utente": [UtenteId],
+      "Attività Utente": [AttivitaUtenteId],
+
+      // data di oggi (stringa YYYY-MM-DD)
+      "Data ISO": todayISOEuropeRome()
     };
 
     if (userEmail) {
       fields["Email"] = userEmail;
     }
 
+    // opzionali
     if (Nota != null && Nota !== "") {
       fields["Nota"] = Nota;
     }
@@ -113,22 +110,24 @@ module.exports = async (req, res) => {
       fields["Umore"] = Number(Umore);
     }
     if (DurataSec != null && DurataSec !== "") {
-      // in Airtable il campo deve chiamarsi esattamente "Durata (sec)"
+      // in Airtable il campo è proprio "Durata (sec)"
       fields["Durata (sec)"] = Number(DurataSec);
     }
 
-    // 3. Creo il record su "Log Completamenti"
-    const LOG_TABLE = encodeURIComponent("Log Completamenti");
-    const air = await fetch(`${API_ROOT}/${LOG_TABLE}`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${AIRTABLE_TOKEN}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        records: [{ fields }],
-      }),
-    });
+    // 3. salvo su Airtable (Log Completamenti)
+    const air = await fetch(
+      `${API_ROOT}/Log%20Completamenti`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${AIRTABLE_TOKEN}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          records: [{ fields }],
+        }),
+      }
+    );
 
     if (!air.ok) {
       const txt = await air.text();
@@ -137,9 +136,9 @@ module.exports = async (req, res) => {
     }
 
     const data = await air.json();
-    // Airtable risponde { records: [ { id:"recXXX", fields:{...} } ] }
     const created = data.records?.[0] || null;
 
+    // rimandiamo l'id del log appena creato
     return res.status(200).json({
       id: created?.id || null,
       fields: created?.fields || {}
