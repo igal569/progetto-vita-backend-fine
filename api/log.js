@@ -1,133 +1,147 @@
+// /api/log.js
 const fetch = require("node-fetch");
 
 const AIRTABLE_TOKEN = process.env.AIRTABLE_TOKEN;
 const BASE_ID = process.env.BASE_ID;
 const API_ROOT = `https://api.airtable.com/v0/${BASE_ID}`;
+const TABLE = "Log Completamenti";
 
-// helper risposta errore
 function sendError(res, code, msg) {
   res.status(code).json({ error: msg });
 }
 
-// prendo l'email dell'utente dalla tabella Users
-async function fetchUserEmail(userId) {
-  if (!userId) return null;
-
-  const r = await fetch(
-    `${API_ROOT}/Users/${encodeURIComponent(userId)}`,
-    {
-      headers: { Authorization: `Bearer ${AIRTABLE_TOKEN}` },
-    }
-  );
-
-  if (!r.ok) {
-    const txt = await r.text();
-    console.error("Airtable error fetching user email:", txt);
-    throw new Error("Failed to fetch user email");
-  }
-
-  const data = await r.json();
-  return data.fields?.["Email"] || data.fields?.["email"] || null;
-}
+// DELETE /api/log/:logId  -> rimane uguale sotto
+// PATCH /api/log/:logId   -> rimane uguale sotto
 
 module.exports = async (req, res) => {
-  if (req.method !== "POST") {
-    return sendError(res, 405, "Method not allowed");
-  }
+  const { method } = req;
 
-  try {
-    const body = req.body || {};
-    // Aspettati dal frontend:
-    // {
-    //   UtenteId: "recUser...",
-    //   AttivitaUtenteId: "recAttUtente...",
-    //   Nota: "...",        (opzionale)
-    //   Umore: 3,           (opzionale)
-    //   DurataSec: 120      (opzionale)
-    // }
-
-    const {
-      UtenteId,
-      AttivitaUtenteId,
-      Nota,
-      Umore,
-      DurataSec
-    } = body;
-
-    if (!UtenteId || !AttivitaUtenteId) {
-      return sendError(res, 400, "Missing UtenteId or AttivitaUtenteId");
-    }
-
-    // 1. email utente (se il campo Email esiste in Log Completamenti)
-    let userEmail = null;
+  if (method === "POST") {
     try {
-      userEmail = await fetchUserEmail(UtenteId);
-    } catch(e) {
-      console.warn("Non riesco a leggere email utente, continuo senza:", e.message);
-    }
+      // CAMPI CHE CI ASPETTIAMO DAL FRONTEND
+      const {
+        Email,
+        AttivitaUtenteNumero, // <-- questo è il valore di Attività Utente.Id, tipo 102
+        Nota,
+        Umore,
+        DurataSec,
+        ScoreMemoria,
+        LivelloMemoria
+      } = req.body || {};
 
-    // 2. PREPARO I CAMPI ESATTAMENTE COME IN AIRTABLE
-    //
-    // ATTENZIONE: NON includiamo "Data/Ora" perché è un campo "Created time"
-    // Airtable lo genera da solo alla creazione, e se provi a mandarlo fallisce.
-    //
-    // Nomi colonne:
-    // - "Utente"
-    // - "Attivita Utente"
-    // - "Email"            (esiste nella tabella? se sì lo mandiamo)
-    // - "Nota"
-    // - "Umore"
-    // - "Durata (sec)"
+      if (!Email) {
+        return sendError(res, 400, "Missing Email");
+      }
+      if (!AttivitaUtenteNumero) {
+        return sendError(res, 400, "Missing AttivitaUtenteNumero");
+      }
 
-    const fields = {
-      "Utente": [UtenteId],
-      "Attivita Utente": [AttivitaUtenteId]
-    };
+      // costruiamo il body per Airtable
+      const fields = {
+        "Email": Email,
+        "Attivita Utente": Number(AttivitaUtenteNumero),
+      };
 
-    if (userEmail) {
-      fields["Email"] = userEmail;
-    }
-    if (Nota != null && Nota !== "") {
-      fields["Nota"] = Nota;
-    }
-    if (Umore != null && Umore !== "") {
-      fields["Umore"] = Number(Umore);
-    }
-    if (DurataSec != null && DurataSec !== "") {
-      fields["Durata (sec)"] = Number(DurataSec);
-    }
+      if (Nota != null)           fields["Nota"] = String(Nota);
+      if (Umore != null)          fields["Umore"] = Number(Umore);
+      if (DurataSec != null)      fields["Durata (sec)"] = Number(DurataSec);
+      if (ScoreMemoria != null)   fields["Score memoria"] = Number(ScoreMemoria);
+      if (LivelloMemoria != null) fields["Livello memoria"] = Number(LivelloMemoria);
 
-    // 3. CHIAMATA AIRTABLE
-    const air = await fetch(
-      `${API_ROOT}/Log%20Completamenti`,
-      {
+      // Data/Ora la lasciamo "Created time" in Airtable, quindi non la mandiamo noi.
+
+      const airtableRes = await fetch(`${API_ROOT}/${encodeURIComponent(TABLE)}`, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${AIRTABLE_TOKEN}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({
-          records: [{ fields }]
-        })
+        body: JSON.stringify({ fields }),
+      });
+
+      if (!airtableRes.ok) {
+        const txt = await airtableRes.text();
+        console.error("Airtable error POST /log:", txt);
+        return sendError(res, 500, "Airtable request failed");
       }
-    );
 
-    if (!air.ok) {
-      const txt = await air.text();
-      console.error("Airtable error POST /log:", txt);
-      return sendError(res, 500, "Airtable request failed");
+      const data = await airtableRes.json(); // {id:'rec...', fields:{...}}
+      // ritorniamo al frontend l'id della riga Log creata, così lo possiamo cancellare dopo
+      return res.status(200).json({
+        id: data.id,
+        fields: data.fields || {},
+      });
+
+    } catch (err) {
+      console.error("Server error POST /api/log:", err);
+      return sendError(res, 500, "Internal error");
     }
-
-    const data = await air.json();
-    const created = data.records?.[0] || null;
-
-    return res.status(200).json({
-      id: created?.id || null,
-      fields: created?.fields || {}
-    });
-
-  } catch (err) {
-    console.error("Server error POST /api/log:", err);
-    return sendError(res, 500, "Internal error");
   }
+
+  // PATCH /api/log/:id  (aggiorna nota/umore)
+  if (method === "PATCH") {
+    try {
+      const logId = req.url.split("/").pop(); // /api/log/recXXXX
+      if (!logId) return sendError(res, 400, "Missing log id");
+
+      const { Nota, Umore } = req.body || {};
+      const fields = {};
+      if (Nota != null)  fields["Nota"] = String(Nota);
+      if (Umore != null) fields["Umore"] = Number(Umore);
+
+      const airtableRes = await fetch(
+        `${API_ROOT}/${encodeURIComponent(TABLE)}/${encodeURIComponent(logId)}`,
+        {
+          method: "PATCH",
+          headers: {
+            Authorization: `Bearer ${AIRTABLE_TOKEN}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ fields }),
+        }
+      );
+
+      if (!airtableRes.ok) {
+        const txt = await airtableRes.text();
+        console.error("Airtable error PATCH /log:", txt);
+        return sendError(res, 500, "Airtable request failed");
+      }
+
+      const data = await airtableRes.json();
+      return res.status(200).json(data);
+
+    } catch (err) {
+      console.error("Server error PATCH /api/log:", err);
+      return sendError(res, 500, "Internal error");
+    }
+  }
+
+  // DELETE /api/log/:id
+  if (method === "DELETE") {
+    try {
+      const logId = req.url.split("/").pop();
+      if (!logId) return sendError(res, 400, "Missing log id");
+
+      const airtableRes = await fetch(
+        `${API_ROOT}/${encodeURIComponent(TABLE)}/${encodeURIComponent(logId)}`,
+        {
+          method: "DELETE",
+          headers: { Authorization: `Bearer ${AIRTABLE_TOKEN}` },
+        }
+      );
+
+      if (!airtableRes.ok) {
+        const txt = await airtableRes.text();
+        console.error("Airtable error DELETE /log:", txt);
+        return sendError(res, 500, "Airtable request failed");
+      }
+
+      return res.status(200).json({ ok: true });
+    } catch (err) {
+      console.error("Server error DELETE /api/log:", err);
+      return sendError(res, 500, "Internal error");
+    }
+  }
+
+  return sendError(res, 405, "Method not allowed");
 };
