@@ -1,41 +1,52 @@
 const fetch = require("node-fetch");
 
-// piccola funzione helper per rispondere con errore pulito
+// helper risposta errore
 function sendError(res, code, msg) {
   res.status(code).json({ error: msg });
 }
 
 module.exports = async (req, res) => {
-  // noi accettiamo solo GET (la tua app fa GET per leggere la sessione)
+  // accettiamo solo GET come avevi visto
   if (req.method !== "GET") {
     return sendError(res, 405, "Method not allowed");
   }
 
   try {
-    // prendiamo eventuali query params passati dal frontend,
-    // esempio: ?maxRecords=1&filterByFormula=...
-    const { maxRecords, filterByFormula, sortField, sortDirection } = req.query || {};
+    // leggiamo le variabili ambiente GIUSTE (quelle che hai già su Vercel)
+    const AIRTABLE_TOKEN = process.env.AIRTABLE_TOKEN;
+    const BASE_ID = process.env.BASE_ID;
 
-    // costruiamo l'URL Airtable come faceva prima il frontend
-    // Tabella: "Sessions"
-    const baseId = process.env.AIRTABLE_BASE;
-    const table = "Sessions";
+    // parametri opzionali dalla query, uguali a quelli che il frontend costruisce
+    const {
+      maxRecords,
+      filterByFormula,
+      sortField,
+      sortDirection
+    } = req.query || {};
 
-    const url = new URL(`https://api.airtable.com/v0/${baseId}/${encodeURIComponent(table)}`);
+    // costruiamo l'URL Airtable verso la tabella "Sessions"
+    const tableName = "Sessions"; // <-- il nome è giusto come nella tua base
+    const url = new URL(
+      `https://api.airtable.com/v0/${BASE_ID}/${encodeURIComponent(tableName)}`
+    );
 
     if (maxRecords) url.searchParams.set("maxRecords", maxRecords);
     if (filterByFormula) url.searchParams.set("filterByFormula", filterByFormula);
-    // prima nel codice c'era anche sort[0][field]=CreatedAt ecc, quindi lo supportiamo:
+
+    // supporto sort[0][field] / sort[0][direction] come nel frontend
     if (sortField) {
       url.searchParams.set("sort[0][field]", sortField);
-      url.searchParams.set("sort[0][direction]", sortDirection || "desc");
+      url.searchParams.set(
+        "sort[0][direction]",
+        sortDirection || "desc"
+      );
     }
 
-    // chiamata a Airtable con la chiave segreta lato server
+    // chiamata vera ad Airtable con il token segreto
     const air = await fetch(url.toString(), {
       headers: {
-        Authorization: `Bearer ${process.env.AIRTABLE_TOKEN}`,
-      },
+        Authorization: `Bearer ${AIRTABLE_TOKEN}`
+      }
     });
 
     if (!air.ok) {
@@ -46,8 +57,9 @@ module.exports = async (req, res) => {
 
     const data = await air.json();
 
-    // Rispondiamo 1:1 alla tua app
+    // rispondiamo al browser con i dati Airtable così com'è abituato il frontend
     return res.status(200).json(data);
+
   } catch (err) {
     console.error("Server error /api/sessions:", err);
     return sendError(res, 500, "Internal error");
