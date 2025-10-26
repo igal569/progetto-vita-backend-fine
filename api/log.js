@@ -4,41 +4,48 @@ const AIRTABLE_TOKEN = process.env.AIRTABLE_TOKEN;
 const BASE_ID = process.env.BASE_ID;
 const API_ROOT = `https://api.airtable.com/v0/${BASE_ID}`;
 
+/**
+ * Ritorna una stringa timestamp ISO locale Europe/Rome
+ * in formato che Airtable accetta per un campo "date/time"
+ * Esempio: "2025-10-26T22:58:00+02:00"
+ */
+function nowEuropeRomeISO() {
+  const now = new Date();
+  const romeStr = now.toLocaleString("en-US", { timeZone: "Europe/Rome" });
+  const romeDate = new Date(romeStr);
+
+  // offset minuti rispetto a UTC
+  const tzOffsetMin = -romeDate.getTimezoneOffset(); // es. 120
+  const sign = tzOffsetMin >= 0 ? "+" : "-";
+  const absMin = Math.abs(tzOffsetMin);
+  const hh = String(Math.floor(absMin / 60)).padStart(2, "0");
+  const mm = String(absMin % 60).padStart(2, "0");
+
+  const yyyy = romeDate.getFullYear();
+  const MM = String(romeDate.getMonth() + 1).padStart(2, "0");
+  const dd = String(romeDate.getDate()).padStart(2, "0");
+  const HH = String(romeDate.getHours()).padStart(2, "0");
+  const min = String(romeDate.getMinutes()).padStart(2, "0");
+  const ss = String(romeDate.getSeconds()).padStart(2, "0");
+
+  return `${yyyy}-${MM}-${dd}T${HH}:${min}:${ss}${sign}${hh}:${mm}`;
+}
+
+// helper risposta errore
 function sendError(res, code, msg) {
   res.status(code).json({ error: msg });
 }
 
-// data di oggi in formato YYYY-MM-DD fuso orario Europa/Rome
-function todayISOEuropeRome() {
-  try {
-    const nowRome = new Date(
-      new Date().toLocaleString("en-US", { timeZone: "Europe/Rome" })
-    );
-    const y = nowRome.getFullYear();
-    const m = String(nowRome.getMonth() + 1).padStart(2, "0");
-    const d = String(nowRome.getDate()).padStart(2, "0");
-    return `${y}-${m}-${d}`;
-  } catch (e) {
-    // fallback UTC
-    const now = new Date();
-    const y = now.getUTCFullYear();
-    const m = String(now.getUTCMonth() + 1).padStart(2, "0");
-    const d = String(now.getUTCDate()).padStart(2, "0");
-    return `${y}-${m}-${d}`;
-  }
-}
-
-// legge l'email dell'utente dalla tabella Users dato il suo recordId
+// prendo l'email dell'utente dalla tabella Users
 async function fetchUserEmail(userId) {
   if (!userId) return null;
 
-  const url = `${API_ROOT}/Users/${encodeURIComponent(userId)}`;
-
-  const r = await fetch(url, {
-    headers: {
-      Authorization: `Bearer ${AIRTABLE_TOKEN}`,
-    },
-  });
+  const r = await fetch(
+    `${API_ROOT}/Users/${encodeURIComponent(userId)}`,
+    {
+      headers: { Authorization: `Bearer ${AIRTABLE_TOKEN}` },
+    }
+  );
 
   if (!r.ok) {
     const txt = await r.text();
@@ -47,19 +54,17 @@ async function fetchUserEmail(userId) {
   }
 
   const data = await r.json();
-  // campo Email nella tabella Users (come mi hai detto)
   return data.fields?.["Email"] || data.fields?.["email"] || null;
 }
 
 module.exports = async (req, res) => {
-  // accettiamo SOLO POST
   if (req.method !== "POST") {
     return sendError(res, 405, "Method not allowed");
   }
 
   try {
     const body = req.body || {};
-    // ci aspettiamo:
+    // dal frontend:
     // {
     //   UtenteId: "recUser...",
     //   AttivitaUtenteId: "recAttUtente...",
@@ -80,29 +85,34 @@ module.exports = async (req, res) => {
       return sendError(res, 400, "Missing UtenteId or AttivitaUtenteId");
     }
 
-    // 1. prendo l'email utente per scriverla nel log
+    // 1. email utente
     let userEmail = null;
     try {
       userEmail = await fetchUserEmail(UtenteId);
-    } catch (e) {
+    } catch(e) {
       console.warn("Non riesco a leggere email utente, continuo senza:", e.message);
     }
 
-    // 2. preparo i campi Airtable
-    const fields = {
-      // link
-      "Utente": [UtenteId],
-      "Attività Utente": [AttivitaUtenteId],
+    // 2. PREPARO I CAMPI ESATTAMENTE COME IN AIRTABLE
 
-      // data di oggi (stringa YYYY-MM-DD)
-      "Data ISO": todayISOEuropeRome()
+    // Nomi colonne (IMPORTANTISSIMO):
+    // - "Utente"                (link a Users)
+    // - "Attivita Utente"       (link a Attività Utente) <-- CAMBIA QUI SE HA ACCENTO DIVERSO
+    // - "Data/Ora"              (campo data e ora)
+    // - "Email"                 (testo) -> se esiste in tabella
+    // - "Nota"                  (testo lungo)
+    // - "Umore"                 (number)
+    // - "Durata (sec)"          (number)
+
+    const fields = {
+      "Utente": [UtenteId],
+      "Attivita Utente": [AttivitaUtenteId],
+      "Data/Ora": nowEuropeRomeISO()
     };
 
     if (userEmail) {
       fields["Email"] = userEmail;
     }
-
-    // opzionali
     if (Nota != null && Nota !== "") {
       fields["Nota"] = Nota;
     }
@@ -110,11 +120,10 @@ module.exports = async (req, res) => {
       fields["Umore"] = Number(Umore);
     }
     if (DurataSec != null && DurataSec !== "") {
-      // in Airtable il campo è proprio "Durata (sec)"
       fields["Durata (sec)"] = Number(DurataSec);
     }
 
-    // 3. salvo su Airtable (Log Completamenti)
+    // 3. CHIAMATA AIRTABLE
     const air = await fetch(
       `${API_ROOT}/Log%20Completamenti`,
       {
@@ -124,8 +133,8 @@ module.exports = async (req, res) => {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          records: [{ fields }],
-        }),
+          records: [{ fields }]
+        })
       }
     );
 
@@ -138,7 +147,6 @@ module.exports = async (req, res) => {
     const data = await air.json();
     const created = data.records?.[0] || null;
 
-    // rimandiamo l'id del log appena creato
     return res.status(200).json({
       id: created?.id || null,
       fields: created?.fields || {}
