@@ -1,0 +1,12 @@
+{
+  "name": "progetto-vita-backend-fine",
+  "version": "1.0.0",
+  "private": true,
+  "description": "API serverless per Progetto Vita (sync utente GoodBarber <-> Airtable)",
+  "scripts": {
+    "test": "echo \"no tests\""
+  },
+  "dependencies": {
+    "node-fetch": "^2.6.7"
+  }
+}
