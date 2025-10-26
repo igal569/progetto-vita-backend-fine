@@ -1,145 +1,124 @@
+// /api/attivita-utente.js
+
 const fetch = require("node-fetch");
 
 const AIRTABLE_TOKEN = process.env.AIRTABLE_TOKEN;
 const BASE_ID = process.env.BASE_ID;
 const API_ROOT = `https://api.airtable.com/v0/${BASE_ID}`;
-const TABLE = "Attività Utente";
+const TABLE_NAME = "Attività Utente";
 
-// piccola helper
-function send(res, code, obj) {
-  res.status(code).json(obj);
+// helper comune
+function send(res, code, payload) {
+  res.status(code).json(payload);
 }
 
 module.exports = async (req, res) => {
   try {
-    // ===== GET /api/attivita-utente?email=... =====
+    // ========== GET: lista attività utente per email ==========
     if (req.method === "GET") {
       const email = req.query.email;
       if (!email) {
         return send(res, 400, { error: "Missing email" });
       }
 
-      // stessa formula che usavi già
-      const filterFormula = `OR(LOWER(ARRAYJOIN({Utente}))=LOWER("${email}"),LOWER({Utente})=LOWER("${email}"))`;
+      // stessa formula che usavi nel frontend
+      const filterFormula =
+        `OR(` +
+        `LOWER(ARRAYJOIN({Utente}))=LOWER("${email}"),` +
+        `LOWER({Utente})=LOWER("${email}")` +
+        `)`;
 
-      const url = new URL(`${API_ROOT}/${encodeURIComponent(TABLE)}`);
+      const url = new URL(`${API_ROOT}/${encodeURIComponent(TABLE_NAME)}`);
       url.searchParams.set("filterByFormula", filterFormula);
       url.searchParams.set("pageSize", "100");
 
       const air = await fetch(url.toString(), {
         headers: {
-          Authorization: `Bearer ${AIRTABLE_TOKEN}`
-        }
+          Authorization: `Bearer ${AIRTABLE_TOKEN}`,
+        },
       });
 
       if (!air.ok) {
         const txt = await air.text();
-        console.error("Airtable error /attivita-utente GET:", txt);
+        console.error("Airtable GET error /attivita-utente:", txt);
         return send(res, 500, { error: "Airtable request failed" });
       }
 
       const data = await air.json();
+      // ritorniamo i record esattamente come li aspetta il frontend
       return send(res, 200, { records: data.records || [] });
     }
 
-    // ===== POST /api/attivita-utente =====
-    // body JSON dal frontend:
-    // {
-    //   UtenteId: CURRENT_USER_ID,
-    //   CatalogoId: rec.id,
-    //   Ricorrenza: defRic,
-    //   Giorno: ... (opzionale)
-    //   Mese: ... (opzionale)
-    // }
+    // ========== POST: crea nuova Attività Utente ==========
     if (req.method === "POST") {
-      let body = {};
-      try {
-        body = typeof req.body === "string" ? JSON.parse(req.body) : req.body || {};
-      } catch (e) {
-        return send(res, 400, { error: "Bad JSON body" });
-      }
+      // il frontend ti manda:
+      // {
+      //   UtenteId: CURRENT_USER_ID,
+      //   CatalogoId: rec.id,
+      //   Ricorrenza: defRic,
+      //   Giorno: ... (opzionale)
+      //   Mese: ... (opzionale)
+      // }
+      const body = req.body || {};
 
-      const {
-        UtenteId,
-        CatalogoId,
-        Ricorrenza,
-        Giorno,
-        Mese
-      } = body;
-
-      if (!UtenteId || !CatalogoId || !Ricorrenza) {
+      if (!body.UtenteId || !body.CatalogoId || !body.Ricorrenza) {
         return send(res, 400, { error: "Missing required fields" });
       }
 
-      // costruisco l'oggetto fields per Airtable
-      // ATTENZIONE ai nomi colpiscono le tue colonne.
-      // Io sto seguendo i nomi che hai usato nel frontend:
-      //  - "Utente" (link a Users)
-      //  - "Attività" (link a Catalogo Attività)
-      //  - "Ricorrenza"
-      //  - "Giorno"
-      //  - "Mese"
-      //  - "Attiva?" true
-      //  - "Ordine Oggi" default 999 (ti va bene perché poi lo riordini)
-      //
-      // Se in Airtable i nomi differiscono, dimmelo e li cambiamo, ma
-      // sono gli stessi che già leggi con rec.fields[...] nel frontend.
+      // Costruiamo il record Airtable nel formato che Airtable vuole
+      // Nota: i campi devono avere gli ESATTI nomi colonna della tua base
       const airtableRecord = {
         fields: {
-          "Utente": [UtenteId],
-          "Attività": [CatalogoId],
-          "Ricorrenza": Ricorrenza,
-          "Attiva?": true,
-          "Ordine Oggi": 999
-        }
+          "Utente": [body.UtenteId],          // link a Users
+          "Attività": [body.CatalogoId],      // link a Catalogo Attività
+          "Ricorrenza": body.Ricorrenza,      // es. "Giornaliera", "Mensile", ...
+        },
       };
 
-      if (Giorno !== undefined) airtableRecord.fields["Giorno"] = Giorno;
-      if (Mese !== undefined)   airtableRecord.fields["Mese"]   = String(Mese);
+      if (body.Giorno !== undefined) {
+        airtableRecord.fields["Giorno"] = body.Giorno;
+      }
+      if (body.Mese !== undefined) {
+        airtableRecord.fields["Mese"] = String(body.Mese);
+      }
 
-      const url = `${API_ROOT}/${encodeURIComponent(TABLE)}`;
-
+      const url = `${API_ROOT}/${encodeURIComponent(TABLE_NAME)}`;
       const air = await fetch(url, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${AIRTABLE_TOKEN}`,
-          "Content-Type": "application/json"
+          "Content-Type": "application/json",
         },
-        body: JSON.stringify({ records: [ airtableRecord ] })
+        body: JSON.stringify({ records: [airtableRecord] }),
       });
 
       if (!air.ok) {
         const txt = await air.text();
-        console.error("Airtable error /attivita-utente POST:", txt);
-        return send(res, 500, { error: "Airtable create failed" });
+        console.error("Airtable POST error /attivita-utente:", txt);
+        return send(res, 500, { error: "Airtable request failed" });
       }
 
       const data = await air.json();
-      // Airtable risponde { records: [ {id:"recXXX", fields:{...}} ] }
+      // Airtable risponde { records:[ { id:"recXXX", fields:{...} } ] }
       const created = data.records && data.records[0];
 
-      return send(res, 200, { id: created?.id || null });
+      return send(res, 200, { id: created.id });
     }
 
-    // ===== PATCH /api/attivita-utente =====
-    // frontend la usa per salvare l'ordine ("Ordine Oggi")
-    // body:
-    // { updates: [{ id:"rec123", ordineOggi: 2 }, ...] }
+    // ========== PATCH: aggiorna Ordine Oggi (ri-ordino drag/up/down) ==========
     if (req.method === "PATCH") {
-      let body = {};
-      try {
-        body = typeof req.body === "string" ? JSON.parse(req.body) : req.body || {};
-      } catch (e) {
-        return send(res, 400, { error: "Bad JSON body" });
-      }
+      // frontend manda:
+      // { updates: [ { id:"rec123", ordineOggi: 2 }, ... ] }
+      const body = req.body || {};
+      const updates = body.updates || [];
 
-      if (!Array.isArray(body.updates) || !body.updates.length) {
+      if (!Array.isArray(updates) || updates.length === 0) {
         return send(res, 400, { error: "Missing updates" });
       }
 
-      // mappo al formato che Airtable vuole per PATCH in bulk
+      // prepariamo payload per Airtable batch update
       const airtablePayload = {
-        records: body.updates.map(u => ({
+        records: updates.map(u => ({
           id: u.id,
           fields: {
             "Ordine Oggi": u.ordineOggi
@@ -147,27 +126,53 @@ module.exports = async (req, res) => {
         }))
       };
 
-      const url = `${API_ROOT}/${encodeURIComponent(TABLE)}`;
+      const url = `${API_ROOT}/${encodeURIComponent(TABLE_NAME)}`;
       const air = await fetch(url, {
         method: "PATCH",
         headers: {
           Authorization: `Bearer ${AIRTABLE_TOKEN}`,
-          "Content-Type": "application/json"
+          "Content-Type": "application/json",
         },
-        body: JSON.stringify(airtablePayload)
+        body: JSON.stringify(airtablePayload),
       });
 
       if (!air.ok) {
         const txt = await air.text();
-        console.error("Airtable error /attivita-utente PATCH:", txt);
-        return send(res, 500, { error: "Airtable patch failed" });
+        console.error("Airtable PATCH error /attivita-utente:", txt);
+        return send(res, 500, { error: "Airtable request failed" });
       }
 
       const data = await air.json();
       return send(res, 200, { ok: true, records: data.records || [] });
     }
 
-    // se arrivi qui è perché hai fatto un metodo non supportato
+    // ========== DELETE /api/attivita-utente?id=recXXXX ==========
+    if (req.method === "DELETE") {
+      const { id } = req.query || {};
+      if (!id) {
+        return send(res, 400, { error: "Missing id" });
+      }
+
+      // chiamata DELETE diretta a Airtable record singolo
+      const url = `${API_ROOT}/${encodeURIComponent(TABLE_NAME)}/${encodeURIComponent(id)}`;
+
+      const air = await fetch(url, {
+        method: "DELETE",
+        headers: {
+          Authorization: `Bearer ${AIRTABLE_TOKEN}`,
+        },
+      });
+
+      if (!air.ok) {
+        const txt = await air.text();
+        console.error("Airtable DELETE error /attivita-utente:", txt);
+        return send(res, 500, { error: "Airtable request failed" });
+      }
+
+      return send(res, 200, { ok: true });
+    }
+
+    // qualsiasi altro metodo
     return send(res, 405, { error: "Method not allowed" });
 
   } catch (err) {
