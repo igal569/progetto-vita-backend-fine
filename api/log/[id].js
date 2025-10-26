@@ -1,3 +1,4 @@
+// /api/log/[id].js
 const fetch = require("node-fetch");
 
 const AIRTABLE_TOKEN = process.env.AIRTABLE_TOKEN;
@@ -24,6 +25,44 @@ module.exports = async (req, res) => {
         const txt = await r.text();
         console.error("Airtable error (GET):", txt);
         return res.status(500).json({ error: "Airtable request failed" });
+      }
+
+      const data = await r.json();
+      return res.status(200).json(data);
+    }
+
+    // --- PATCH: aggiorna Nota / Umore ---
+    if (req.method === "PATCH") {
+      const body = req.body || {};
+      const fields = {};
+
+      if (body.Nota != null) {
+        fields["Nota"] = body.Nota;
+      }
+      if (body.Umore != null) {
+        fields["Umore"] = Number(body.Umore);
+      }
+
+      const r = await fetch(`${API_ROOT}/${encodeURIComponent(TABLE)}`, {
+        method: "PATCH",
+        headers: {
+          Authorization: `Bearer ${AIRTABLE_TOKEN}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          records: [
+            {
+              id: id,
+              fields
+            }
+          ]
+        }),
+      });
+
+      if (!r.ok) {
+        const txt = await r.text();
+        console.error("Airtable error (PATCH):", txt);
+        return res.status(500).json({ error: "Airtable patch failed" });
       }
 
       const data = await r.json();
