@@ -1,22 +1,45 @@
+// /api/completati.js
 const fetch = require("node-fetch");
 
 const AIRTABLE_TOKEN = process.env.AIRTABLE_TOKEN;
 const BASE_ID = process.env.BASE_ID;
 const API_ROOT = `https://api.airtable.com/v0/${BASE_ID}`;
+const TABLE = "Log Completamenti";
+
+function sendError(res, code, msg) {
+  res.status(code).json({ error: msg });
+}
 
 module.exports = async (req, res) => {
+  if (req.method !== "GET") {
+    return sendError(res, 405, "Method not allowed");
+  }
+
   try {
-    const { email, date } = req.query;
+    const { email, date } = req.query || {};
     if (!email || !date) {
-      return res.status(400).json({ error: "Missing email or date" });
+      return sendError(res, 400, "Missing email or date");
     }
 
-    // filtro: record dell'utente (per email) in quella data ISO
-    const filter = `AND(LOWER({Email})=LOWER("${email}"), {Data ISO}="${date}")`;
+    // filtro:
+    //  AND(
+    //    LOWER({Email}) = LOWER("xxx"),
+    //    {Data ISO} = "2025-10-26"
+    //  )
+    //
+    // NB: il campo in Airtable deve chiamarsi esattamente "Data ISO"
+    // e il campo email nel log deve chiamarsi "Email" (come l'abbiamo messo noi nel POST /api/log)
 
-    const url = `${API_ROOT}/Log%20Completamenti?filterByFormula=${encodeURIComponent(filter)}`;
+    const filterFormula =
+      `AND(LOWER({Email})=LOWER("${email}"), {Data ISO}="${date}")`;
 
-    const air = await fetch(url, {
+    const url = new URL(
+      `${API_ROOT}/${encodeURIComponent(TABLE)}`
+    );
+    url.searchParams.set("filterByFormula", filterFormula);
+    url.searchParams.set("pageSize", "100");
+
+    const air = await fetch(url.toString(), {
       headers: {
         Authorization: `Bearer ${AIRTABLE_TOKEN}`,
       },
@@ -24,18 +47,19 @@ module.exports = async (req, res) => {
 
     if (!air.ok) {
       const txt = await air.text();
-      console.error("Airtable error /completati:", txt);
-      return res.status(500).json({ error: "Airtable request failed" });
+      console.error("Airtable error GET /completati:", txt);
+      return sendError(res, 500, "Airtable request failed");
     }
 
     const data = await air.json();
 
-    // ritorniamo come {records:[...]} perché il frontend se lo aspetta così
+    // Risposta uniforme: { records: [ {id, fields:{...}}, ... ] }
     return res.status(200).json({
       records: data.records || []
     });
+
   } catch (err) {
     console.error("Server error /api/completati:", err);
-    return res.status(500).json({ error: "Internal error" });
+    return sendError(res, 500, "Internal error");
   }
 };
