@@ -12,27 +12,31 @@ module.exports = async (req, res) => {
     return res.status(400).json({ error: "Missing record id" });
   }
 
+  // Deve essere DELETE
+  if (req.method !== "DELETE") {
+    return res.status(405).json({ error: "Method not allowed" });
+  }
+
   try {
-    if (req.method === "DELETE") {
-      const url = `${API_ROOT}/${encodeURIComponent(TABLE)}/${encodeURIComponent(id)}`;
-      const r = await fetch(url, {
-        method: "DELETE",
-        headers: { Authorization: `Bearer ${AIRTABLE_TOKEN}` },
-      });
+    // Airtable delete singolo record: DELETE /TABLE/recXYZ
+    const url = `${API_ROOT}/${encodeURIComponent(TABLE)}/${encodeURIComponent(id)}`;
 
-      if (!r.ok) {
-        const txt = await r.text();
-        console.error("Airtable error (DELETE):", txt);
-        return res.status(500).json({ error: "Airtable delete failed" });
+    const air = await fetch(url, {
+      method: "DELETE",
+      headers: {
+        Authorization: `Bearer ${AIRTABLE_TOKEN}`,
       }
+    });
 
-      return res.status(200).json({ ok: true });
+    if (!air.ok) {
+      const txt = await air.text();
+      console.error("Airtable error /attivita-utente/[id] DELETE:", txt);
+      return res.status(500).json({ error: "Airtable delete failed" });
     }
 
-    res.status(405).json({ error: "Method not allowed" });
-
+    return res.status(200).json({ ok: true });
   } catch (err) {
     console.error("Server error /api/attivita-utente/[id]:", err);
-    res.status(500).json({ error: "Internal error" });
+    return res.status(500).json({ error: "Internal error" });
   }
 };
