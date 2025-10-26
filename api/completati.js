@@ -10,7 +10,6 @@ function sendError(res, code, msg) {
   res.status(code).json({ error: msg });
 }
 
-// helper: oggi in Europe/Rome => "YYYY-MM-DD"
 function ymdEuropeRome(d = new Date()) {
   const romeNow = new Date(
     d.toLocaleString("en-US", { timeZone: "Europe/Rome" })
@@ -32,25 +31,9 @@ module.exports = async (req, res) => {
       return sendError(res, 400, "Missing email");
     }
 
-    // data del giorno che ci interessa (YYYY-MM-DD, lato frontend usa ymd(dayObj))
     const targetDay = date || ymdEuropeRome();
 
-    // IMPORTANTISSIMO:
-    // Filtro:
-    //  1) stessa email (LOWER confrontata)
-    //  2) stessa data (giorno) estratta dal campo "Data/Ora"
-    //
-    // In Airtable possiamo confrontare solo la parte data con DATETIME_FORMAT(...)
-    //
-    // NOTA: CAMPO "Data/Ora" deve chiamarsi esattamente così.
-    // NOTA: CAMPO "Utente" -> lookup email? No. Usiamo campo "Email" che salviamo nel POST /api/log.
-    //
-    // Quindi formula:
-    // AND(
-    //   LOWER({Email}) = LOWER("xxx@xxx"),
-    //   DATETIME_FORMAT({Data/Ora}, 'YYYY-MM-DD') = "2025-10-26"
-    // )
-    //
+    // filtriamo per email e per giorno (ricavato da Data/Ora)
     const filterFormula =
       `AND(` +
       `LOWER({Email})=LOWER("${email}"),` +
@@ -73,10 +56,20 @@ module.exports = async (req, res) => {
 
     const data = await air.json();
 
-    // Risposta diretta: {records:[...]} – ogni record ha fields.Attività Utente (link) e id
-    return res.status(200).json({
-      records: data.records || [],
-    });
+    // Preparo records in questo formato:
+    // {
+    //   logId: 'recXXX',              <-- id riga Log
+    //   attivitaNum: 102              <-- valore campo "Attivita Utente" (numero)
+    // }
+    const out = (data.records || []).map(r => ({
+      logId: r.id,
+      attivitaNum: r.fields && r.fields["Attivita Utente"]
+        ? Number(r.fields["Attivita Utente"])
+        : null
+    }));
+
+    return res.status(200).json({ records: out });
+
   } catch (err) {
     console.error("Server error /api/completati:", err);
     return sendError(res, 500, "Internal error");
