@@ -11,8 +11,10 @@ module.exports = async (req, res) => {
       return res.status(400).json({ error: "Missing email or date" });
     }
 
+    // filtro: record dell'utente (per email) in quella data ISO
     const filter = `AND(LOWER({Email})=LOWER("${email}"), {Data ISO}="${date}")`;
-    const url = `${API_ROOT}/Log Completamenti?filterByFormula=${encodeURIComponent(filter)}`;
+
+    const url = `${API_ROOT}/Log%20Completamenti?filterByFormula=${encodeURIComponent(filter)}`;
 
     const air = await fetch(url, {
       headers: {
@@ -22,12 +24,16 @@ module.exports = async (req, res) => {
 
     if (!air.ok) {
       const txt = await air.text();
-      console.error("Airtable error:", txt);
+      console.error("Airtable error /completati:", txt);
       return res.status(500).json({ error: "Airtable request failed" });
     }
 
     const data = await air.json();
-    return res.status(200).json(data);
+
+    // ritorniamo come {records:[...]} perché il frontend se lo aspetta così
+    return res.status(200).json({
+      records: data.records || []
+    });
   } catch (err) {
     console.error("Server error /api/completati:", err);
     return res.status(500).json({ error: "Internal error" });
