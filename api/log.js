@@ -10,7 +10,6 @@ function sendError(res, code, msg) {
   res.status(code).json({ error: msg });
 }
 
-// helper per parlare con Airtable
 async function airtableFetch(path, opt = {}) {
   const r = await fetch(`${API_ROOT}/${encodeURIComponent(path)}`, {
     ...opt,
@@ -28,35 +27,18 @@ async function airtableFetch(path, opt = {}) {
   return r.json();
 }
 
-// =========================
 // POST /api/log
-// crea una riga su "Log Completamenti"
-// Body JSON dal frontend:
-// {
-//   Email: "user@mail.com",
-//   AttivitaUtenteId: "recXXXX",   <-- obbligatorio
-//   Nota: "...",                   <-- opzionale
-//   Umore: 4,                      <-- opzionale (numero)
-//   DurataSec: 123                 <-- opzionale (numero)
-// }
-//
-// NB: "Data/Ora" NON la mandiamo. Airtable la mette da solo.
-// NB: "Attivita Utente" è un campo link -> DEVE essere array ["recXXXX"]
-// =========================
+// body: { Email, AttivitaUtenteId, Nota?, Umore?, DurataSec? }
 async function handlePOST(req, res) {
   try {
     const { Email, AttivitaUtenteId, Nota, Umore, DurataSec } = req.body || {};
 
-    if (!Email) {
-      return sendError(res, 400, "Missing Email");
-    }
-    if (!AttivitaUtenteId) {
-      return sendError(res, 400, "Missing AttivitaUtenteId");
-    }
+    if (!Email) return sendError(res, 400, "Missing Email");
+    if (!AttivitaUtenteId) return sendError(res, 400, "Missing AttivitaUtenteId");
 
     const fields = {
       Email: Email,
-      "Attivita Utente": [AttivitaUtenteId], // campo link
+      "Attivita Utente": [AttivitaUtenteId],
     };
 
     if (Nota != null && Nota !== "") {
@@ -69,15 +51,11 @@ async function handlePOST(req, res) {
       fields["Durata (sec)"] = Number(DurataSec);
     }
 
-    // crea record
     const data = await airtableFetch(TABLE_LOG, {
       method: "POST",
-      body: JSON.stringify({
-        fields,
-      }),
+      body: JSON.stringify({ fields }),
     });
 
-    // rispondo con { id, fields }
     return res.status(200).json({
       id: data.id,
       fields: data.fields || {},
@@ -88,18 +66,12 @@ async function handlePOST(req, res) {
   }
 }
 
-// =========================
-// GET /api/log/:id
-// restituisce UNA riga (per ricaricare Nota/Umore quando riapri il diario)
-// =========================
+// GET /api/log?id=recXXXX
 async function handleGET(req, res) {
   try {
     const { id } = req.query || {};
-    if (!id) {
-      return sendError(res, 400, "Missing id");
-    }
+    if (!id) return sendError(res, 400, "Missing id");
 
-    // leggi record
     const data = await airtableFetch(`${TABLE_LOG}/${id}`, {
       method: "GET",
     });
@@ -114,27 +86,17 @@ async function handleGET(req, res) {
   }
 }
 
-// =========================
-// PATCH /api/log/:id
-// aggiorna Nota, Umore (es. Modifica diario)
-// Body JSON:
-// { Nota: "...", Umore: 3 }
-// =========================
+// PATCH /api/log?id=recXXXX
+// body: { Nota?, Umore? }
 async function handlePATCH(req, res) {
   try {
     const { id } = req.query || {};
-    if (!id) {
-      return sendError(res, 400, "Missing id");
-    }
+    if (!id) return sendError(res, 400, "Missing id");
 
     const { Nota, Umore } = req.body || {};
     const fields = {};
-    if (Nota != null) {
-      fields["Nota"] = Nota;
-    }
-    if (Umore != null) {
-      fields["Umore"] = Number(Umore);
-    }
+    if (Nota != null) fields["Nota"] = Nota;
+    if (Umore != null) fields["Umore"] = Number(Umore);
 
     const data = await airtableFetch(`${TABLE_LOG}/${id}`, {
       method: "PATCH",
@@ -151,18 +113,12 @@ async function handlePATCH(req, res) {
   }
 }
 
-// =========================
-// DELETE /api/log/:id
-// elimina la riga dal log (toggle OFF)
-// =========================
+// DELETE /api/log?id=recXXXX
 async function handleDELETE(req, res) {
   try {
     const { id } = req.query || {};
-    if (!id) {
-      return sendError(res, 400, "Missing id");
-    }
+    if (!id) return sendError(res, 400, "Missing id");
 
-    // cancella record
     await airtableFetch(`${TABLE_LOG}/${id}`, {
       method: "DELETE",
     });
@@ -174,9 +130,6 @@ async function handleDELETE(req, res) {
   }
 }
 
-// =========================
-// Router principale
-// =========================
 module.exports = async (req, res) => {
   const { method } = req;
 
